@@ -169,7 +169,7 @@ func (gcToolchain) gc(b *Builder, a *Action, archive string, importcfg, embedcfg
 	}
 	// Add -c=N to use concurrent backend compilation, if possible.
 	if c := gcBackendConcurrency(gcflags); c > 1 {
-		gcflags = append(gcflags, fmt.Sprintf("-c=%d", c))
+		defaultGcFlags = append(defaultGcFlags, fmt.Sprintf("-c=%d", c))
 	}
 
 	args := []any{cfg.BuildToolexec, base.Tool("compile"), "-o", ofile, "-trimpath", a.trimpath(), defaultGcFlags, gcflags}
@@ -646,6 +646,11 @@ func (gcToolchain) ld(b *Builder, root *Action, out, importcfg, mainpkg string) 
 		if !platform.MustLinkExternal(cfg.Goos, cfg.Goarch) {
 			ldflags = append(ldflags, "-X=cmd/internal/objabi.buildID="+root.buildID)
 		}
+	}
+
+	// Store default GODEBUG in binaries.
+	if root.Package.DefaultGODEBUG != "" {
+		ldflags = append(ldflags, "-X=runtime.godebugDefault="+root.Package.DefaultGODEBUG)
 	}
 
 	// If the user has not specified the -extld option, then specify the

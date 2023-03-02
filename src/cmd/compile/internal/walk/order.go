@@ -536,7 +536,7 @@ func (o *orderState) call(nn ir.Node) {
 	}
 
 	n := nn.(*ir.CallExpr)
-	typecheck.FixVariadicCall(n)
+	typecheck.AssertFixedCall(n)
 
 	if isFuncPCIntrinsic(n) && isIfaceOfFunc(n.Args[0]) {
 		// For internal/abi.FuncPCABIxxx(fn), if fn is a defined function,
@@ -740,7 +740,7 @@ func (o *orderState) stmt(n ir.Node) {
 			}
 		}
 
-	case ir.OCHECKNIL, ir.OCLOSE, ir.OPANIC, ir.ORECV:
+	case ir.OCHECKNIL, ir.OCLEAR, ir.OCLOSE, ir.OPANIC, ir.ORECV:
 		n := n.(*ir.UnaryExpr)
 		t := o.markTemp()
 		n.X = o.expr(n.X, nil)

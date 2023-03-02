@@ -19,7 +19,6 @@ type DebugFlags struct {
 	Append                int    `help:"print information about append compilation"`
 	Checkptr              int    `help:"instrument unsafe pointer conversions\n0: instrumentation disabled\n1: conversions involving unsafe.Pointer are instrumented\n2: conversions to unsafe.Pointer force heap allocation" concurrent:"ok"`
 	Closure               int    `help:"print information about closure compilation"`
-	DclStack              int    `help:"run internal dclstack check"`
 	Defer                 int    `help:"print information about defer compilation"`
 	DisableNil            int    `help:"disable nil checks" concurrent:"ok"`
 	DumpPtrs              int    `help:"show Node pointers values in dump output"`
@@ -46,14 +45,14 @@ type DebugFlags struct {
 	SoftFloat             int    `help:"force compiler to emit soft-float code" concurrent:"ok"`
 	SyncFrames            int    `help:"how many writer stack frames to include at sync points in unified export data"`
 	TypeAssert            int    `help:"print information about type assertion inlining"`
-	TypecheckInl          int    `help:"eager typechecking of inline function bodies" concurrent:"ok"`
-	Unified               int    `help:"enable unified IR construction"`
 	WB                    int    `help:"print information about write barriers"`
 	ABIWrap               int    `help:"print information about ABI wrapper generation"`
 	MayMoreStack          string `help:"call named function before all stack growth checks" concurrent:"ok"`
 	PGOInlineCDFThreshold string `help:"cummulative threshold percentage for determining call sites as hot candidates for inlining" concurrent:"ok"`
 	PGOInlineBudget       int    `help:"inline budget for hot functions" concurrent:"ok"`
 	PGOInline             int    `help:"debug profile-guided inlining"`
+	WrapGlobalMapDbg      int    "help:\"debug trace output for global map init wrapping\""
+	WrapGlobalMapStress   int    "help:\"run global map init wrap in stress mode (no size cutoff)\""
 
 	ConcurrentOk bool // true if only concurrentOk flags seen
 }

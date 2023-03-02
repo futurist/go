@@ -186,11 +186,15 @@ func walkCompare(n *ir.BinaryExpr, init *ir.Nodes) ir.Node {
 			base.Fatalf("arguments of comparison must be lvalues - %v %v", cmpl, cmpr)
 		}
 
-		fn, needsize := eqFor(t)
+		// Should only arrive here with large memory or
+		// a struct/array containing a non-memory field/element.
+		// Small memory is handled inline, and single non-memory
+		// is handled by walkCompare.
+		fn, needsLength := reflectdata.EqFor(t)
 		call := ir.NewCallExpr(base.Pos, ir.OCALL, fn, nil)
 		call.Args.Append(typecheck.NodAddr(cmpl))
 		call.Args.Append(typecheck.NodAddr(cmpr))
-		if needsize {
+		if needsLength {
 			call.Args.Append(ir.NewInt(t.Size()))
 		}
 		res := ir.Node(call)
@@ -456,33 +460,6 @@ func finishCompare(n *ir.BinaryExpr, r ir.Node, init *ir.Nodes) ir.Node {
 	r = typecheck.Conv(r, n.Type())
 	r = walkExpr(r, init)
 	return r
-}
-
-func eqFor(t *types.Type) (n ir.Node, needsize bool) {
-	// Should only arrive here with large memory or
-	// a struct/array containing a non-memory field/element.
-	// Small memory is handled inline, and single non-memory
-	// is handled by walkCompare.
-	switch a, _ := types.AlgType(t); a {
-	case types.AMEM:
-		n := typecheck.LookupRuntime("memequal")
-		n = typecheck.SubstArgTypes(n, t, t)
-		return n, true
-	case types.ASPECIAL:
-		sym := reflectdata.TypeSymPrefix(".eq", t)
-		// TODO(austin): This creates an ir.Name with a nil Func.
-		n := typecheck.NewName(sym)
-		ir.MarkFunc(n)
-		n.SetType(types.NewSignature(types.NoPkg, nil, nil, []*types.Field{
-			types.NewField(base.Pos, nil, types.NewPtr(t)),
-			types.NewField(base.Pos, nil, types.NewPtr(t)),
-		}, []*types.Field{
-			types.NewField(base.Pos, nil, types.Types[types.TBOOL]),
-		}))
-		return n, false
-	}
-	base.Fatalf("eqFor %v", t)
-	return nil, false
 }
 
 // brcom returns !(op).

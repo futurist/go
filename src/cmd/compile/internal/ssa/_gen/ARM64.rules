@@ -350,7 +350,8 @@
 (OffPtr [off] ptr) => (ADDconst [off] ptr)
 
 (Addr {sym} base) => (MOVDaddr {sym} base)
-(LocalAddr {sym} base _) => (MOVDaddr {sym} base)
+(LocalAddr <t> {sym} base mem) && t.Elem().HasPointers() => (MOVDaddr {sym} (SPanchored base mem))
+(LocalAddr <t> {sym} base _)  && !t.Elem().HasPointers() => (MOVDaddr {sym} base)
 
 // loads
 (Load <t> ptr mem) && t.IsBoolean() => (MOVBUload ptr mem)
@@ -1240,7 +1241,7 @@
 (MOVDnop (MOVDconst [c])) => (MOVDconst [c])
 
 // fold constant into arithmetic ops
-(ADD x (MOVDconst [c])) => (ADDconst [c] x)
+(ADD x (MOVDconst <t> [c])) && !t.IsPtr() => (ADDconst [c] x)
 (SUB x (MOVDconst [c])) => (SUBconst [c] x)
 (AND x (MOVDconst [c])) => (ANDconst [c] x)
 (OR  x (MOVDconst [c])) => (ORconst  [c] x)
@@ -1663,6 +1664,16 @@
 // Boolean-generating instructions (NOTE: NOT all boolean Values) always
 // zero upper bit of the register; no need to zero-extend
 (MOVBUreg x:((Equal|NotEqual|LessThan|LessThanU|LessThanF|LessEqual|LessEqualU|LessEqualF|GreaterThan|GreaterThanU|GreaterThanF|GreaterEqual|GreaterEqualU|GreaterEqualF) _)) => (MOVDreg x)
+
+// omit unsign extension
+
+(MOVWUreg x) && zeroUpper32Bits(x, 3) => x
+
+// omit sign extension
+
+(MOVWreg <t> (ANDconst x [c])) && uint64(c) & uint64(0xffffffff80000000) == 0 => (ANDconst <t> x [c])
+(MOVHreg <t> (ANDconst x [c])) && uint64(c) & uint64(0xffffffffffff8000) == 0 => (ANDconst <t> x [c])
+(MOVBreg <t> (ANDconst x [c])) && uint64(c) & uint64(0xffffffffffffff80) == 0 => (ANDconst <t> x [c])
 
 // absorb flag constants into conditional instructions
 (CSEL [cc] x _ flag) && ccARM64Eval(cc, flag) > 0 => x

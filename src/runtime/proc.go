@@ -751,17 +751,6 @@ func schedinit() {
 	// World is effectively started now, as P's can run.
 	worldStarted()
 
-	// For cgocheck > 1, we turn on the write barrier at all times
-	// and check all pointer writes. We can't do this until after
-	// procresize because the write barrier needs a P.
-	if debug.cgocheck > 1 {
-		writeBarrier.cgo = true
-		writeBarrier.enabled = true
-		for _, pp := range allp {
-			pp.wbBuf.reset()
-		}
-	}
-
 	if buildVersion == "" {
 		// Condition should never trigger. This code just serves
 		// to ensure runtime·buildVersion is kept in the resulting binary.
@@ -829,7 +818,7 @@ func mcommoninit(mp *m, id int64) {
 		hi = 1
 	}
 	// Same behavior as for 1.17.
-	// TODO: Simplify ths.
+	// TODO: Simplify this.
 	if goarch.BigEndian {
 		mp.fastrand = uint64(lo)<<32 | uint64(hi)
 	} else {
@@ -4294,6 +4283,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 	newg.sched.pc = abi.FuncPCABI0(goexit) + sys.PCQuantum // +PCQuantum so that previous instruction is in same function
 	newg.sched.g = guintptr(unsafe.Pointer(newg))
 	gostartcallfn(&newg.sched, fn)
+	newg.parentGoid = callergp.goid
 	newg.gopc = callerpc
 	newg.ancestors = saveAncestors(callergp)
 	newg.startpc = fn.fn
@@ -4348,7 +4338,7 @@ func newproc1(fn *funcval, callergp *g, callerpc uintptr) *g {
 }
 
 // saveAncestors copies previous ancestors of the given caller g and
-// includes infor for the current caller into a new set of tracebacks for
+// includes info for the current caller into a new set of tracebacks for
 // a g being created.
 func saveAncestors(callergp *g) *[]ancestorInfo {
 	// Copy all prior info, except for the root goroutine (goid 0).

@@ -1,5 +1,4 @@
-// Code generated from _gen/ARM64.rules; DO NOT EDIT.
-// generated with: cd _gen; go run .
+// Code generated from _gen/ARM64.rules using 'go generate'; DO NOT EDIT.
 
 package ssa
 
@@ -1179,7 +1178,8 @@ func rewriteValueARM64_OpARM64ADCSflags(v *Value) bool {
 func rewriteValueARM64_OpARM64ADD(v *Value) bool {
 	v_1 := v.Args[1]
 	v_0 := v.Args[0]
-	// match: (ADD x (MOVDconst [c]))
+	// match: (ADD x (MOVDconst <t> [c]))
+	// cond: !t.IsPtr()
 	// result: (ADDconst [c] x)
 	for {
 		for _i0 := 0; _i0 <= 1; _i0, v_0, v_1 = _i0+1, v_1, v_0 {
@@ -1187,7 +1187,11 @@ func rewriteValueARM64_OpARM64ADD(v *Value) bool {
 			if v_1.Op != OpARM64MOVDconst {
 				continue
 			}
+			t := v_1.Type
 			c := auxIntToInt64(v_1.AuxInt)
+			if !(!t.IsPtr()) {
+				continue
+			}
 			v.reset(OpARM64ADDconst)
 			v.AuxInt = int64ToAuxInt(c)
 			v.AddArg(x)
@@ -8267,6 +8271,25 @@ func rewriteValueARM64_OpARM64MOVBreg(v *Value) bool {
 		v.AuxInt = int64ToAuxInt(int64(int8(c)))
 		return true
 	}
+	// match: (MOVBreg <t> (ANDconst x [c]))
+	// cond: uint64(c) & uint64(0xffffffffffffff80) == 0
+	// result: (ANDconst <t> x [c])
+	for {
+		t := v.Type
+		if v_0.Op != OpARM64ANDconst {
+			break
+		}
+		c := auxIntToInt64(v_0.AuxInt)
+		x := v_0.Args[0]
+		if !(uint64(c)&uint64(0xffffffffffffff80) == 0) {
+			break
+		}
+		v.reset(OpARM64ANDconst)
+		v.Type = t
+		v.AuxInt = int64ToAuxInt(c)
+		v.AddArg(x)
+		return true
+	}
 	// match: (MOVBreg (SLLconst [lc] x))
 	// cond: lc < 8
 	// result: (SBFIZ [armBFAuxInt(lc, 8-lc)] x)
@@ -11987,6 +12010,25 @@ func rewriteValueARM64_OpARM64MOVHreg(v *Value) bool {
 		v.AuxInt = int64ToAuxInt(int64(int16(c)))
 		return true
 	}
+	// match: (MOVHreg <t> (ANDconst x [c]))
+	// cond: uint64(c) & uint64(0xffffffffffff8000) == 0
+	// result: (ANDconst <t> x [c])
+	for {
+		t := v.Type
+		if v_0.Op != OpARM64ANDconst {
+			break
+		}
+		c := auxIntToInt64(v_0.AuxInt)
+		x := v_0.Args[0]
+		if !(uint64(c)&uint64(0xffffffffffff8000) == 0) {
+			break
+		}
+		v.reset(OpARM64ANDconst)
+		v.Type = t
+		v.AuxInt = int64ToAuxInt(c)
+		v.AddArg(x)
+		return true
+	}
 	// match: (MOVHreg (SLLconst [lc] x))
 	// cond: lc < 16
 	// result: (SBFIZ [armBFAuxInt(lc, 16-lc)] x)
@@ -13683,6 +13725,17 @@ func rewriteValueARM64_OpARM64MOVWUreg(v *Value) bool {
 		v.AuxInt = int64ToAuxInt(int64(uint32(c)))
 		return true
 	}
+	// match: (MOVWUreg x)
+	// cond: zeroUpper32Bits(x, 3)
+	// result: x
+	for {
+		x := v_0
+		if !(zeroUpper32Bits(x, 3)) {
+			break
+		}
+		v.copyOf(x)
+		return true
+	}
 	// match: (MOVWUreg (SLLconst [lc] x))
 	// cond: lc >= 32
 	// result: (MOVDconst [0])
@@ -14183,6 +14236,25 @@ func rewriteValueARM64_OpARM64MOVWreg(v *Value) bool {
 		c := auxIntToInt64(v_0.AuxInt)
 		v.reset(OpARM64MOVDconst)
 		v.AuxInt = int64ToAuxInt(int64(int32(c)))
+		return true
+	}
+	// match: (MOVWreg <t> (ANDconst x [c]))
+	// cond: uint64(c) & uint64(0xffffffff80000000) == 0
+	// result: (ANDconst <t> x [c])
+	for {
+		t := v.Type
+		if v_0.Op != OpARM64ANDconst {
+			break
+		}
+		c := auxIntToInt64(v_0.AuxInt)
+		x := v_0.Args[0]
+		if !(uint64(c)&uint64(0xffffffff80000000) == 0) {
+			break
+		}
+		v.reset(OpARM64ANDconst)
+		v.Type = t
+		v.AuxInt = int64ToAuxInt(c)
+		v.AddArg(x)
 		return true
 	}
 	// match: (MOVWreg (SLLconst [lc] x))
@@ -24791,17 +24863,44 @@ func rewriteValueARM64_OpLoad(v *Value) bool {
 	return false
 }
 func rewriteValueARM64_OpLocalAddr(v *Value) bool {
+	v_1 := v.Args[1]
 	v_0 := v.Args[0]
-	// match: (LocalAddr {sym} base _)
-	// result: (MOVDaddr {sym} base)
+	b := v.Block
+	typ := &b.Func.Config.Types
+	// match: (LocalAddr <t> {sym} base mem)
+	// cond: t.Elem().HasPointers()
+	// result: (MOVDaddr {sym} (SPanchored base mem))
 	for {
+		t := v.Type
 		sym := auxToSym(v.Aux)
 		base := v_0
+		mem := v_1
+		if !(t.Elem().HasPointers()) {
+			break
+		}
+		v.reset(OpARM64MOVDaddr)
+		v.Aux = symToAux(sym)
+		v0 := b.NewValue0(v.Pos, OpSPanchored, typ.Uintptr)
+		v0.AddArg2(base, mem)
+		v.AddArg(v0)
+		return true
+	}
+	// match: (LocalAddr <t> {sym} base _)
+	// cond: !t.Elem().HasPointers()
+	// result: (MOVDaddr {sym} base)
+	for {
+		t := v.Type
+		sym := auxToSym(v.Aux)
+		base := v_0
+		if !(!t.Elem().HasPointers()) {
+			break
+		}
 		v.reset(OpARM64MOVDaddr)
 		v.Aux = symToAux(sym)
 		v.AddArg(base)
 		return true
 	}
+	return false
 }
 func rewriteValueARM64_OpLsh16x16(v *Value) bool {
 	v_1 := v.Args[1]
