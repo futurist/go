@@ -144,8 +144,8 @@ func (gcToolchain) gc(b *Builder, a *Action, archive string, importcfg, embedcfg
 	if p.Internal.CoverageCfg != "" {
 		defaultGcFlags = append(defaultGcFlags, "-coveragecfg="+p.Internal.CoverageCfg)
 	}
-	if cfg.BuildPGOFile != "" {
-		defaultGcFlags = append(defaultGcFlags, "-pgoprofile="+cfg.BuildPGOFile)
+	if p.Internal.PGOProfile != "" {
+		defaultGcFlags = append(defaultGcFlags, "-pgoprofile="+p.Internal.PGOProfile)
 	}
 	if symabis != "" {
 		defaultGcFlags = append(defaultGcFlags, "-symabis", symabis)
@@ -643,7 +643,7 @@ func (gcToolchain) ld(b *Builder, root *Action, out, importcfg, mainpkg string) 
 		// linker's build id, which will cause our build id to not
 		// match the next time the tool is built.
 		// Rely on the external build id instead.
-		if !platform.MustLinkExternal(cfg.Goos, cfg.Goarch) {
+		if !platform.MustLinkExternal(cfg.Goos, cfg.Goarch, false) {
 			ldflags = append(ldflags, "-X=cmd/internal/objabi.buildID="+root.buildID)
 		}
 	}
@@ -683,8 +683,10 @@ func (gcToolchain) ld(b *Builder, root *Action, out, importcfg, mainpkg string) 
 	// just the final path element.
 	// On Windows, DLL file name is recorded in PE file
 	// export section, so do like on OS X.
+	// On Linux, for a shared object, at least with the Gold linker,
+	// the output file path is recorded in the .gnu.version_d section.
 	dir := "."
-	if (cfg.Goos == "darwin" || cfg.Goos == "windows") && cfg.BuildBuildmode == "c-shared" {
+	if cfg.BuildBuildmode == "c-shared" || cfg.BuildBuildmode == "plugin" {
 		dir, out = filepath.Split(out)
 	}
 

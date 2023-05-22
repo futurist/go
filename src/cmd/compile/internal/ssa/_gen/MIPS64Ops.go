@@ -196,6 +196,7 @@ func init() {
 		{name: "NEGV", argLength: 1, reg: gp11},                // -arg0
 		{name: "NEGF", argLength: 1, reg: fp11, asm: "NEGF"},   // -arg0, float32
 		{name: "NEGD", argLength: 1, reg: fp11, asm: "NEGD"},   // -arg0, float64
+		{name: "ABSD", argLength: 1, reg: fp11, asm: "ABSD"},   // abs(arg0), float64
 		{name: "SQRTD", argLength: 1, reg: fp11, asm: "SQRTD"}, // sqrt(arg0), float64
 		{name: "SQRTF", argLength: 1, reg: fp11, asm: "SQRTF"}, // sqrt(arg0), float32
 
@@ -359,6 +360,17 @@ func init() {
 			faultOnNilArg0: true,
 			faultOnNilArg1: true,
 		},
+
+		// atomic and/or.
+		// *arg0 &= (|=) arg1. arg2=mem. returns memory.
+		// SYNC
+		// LL	(Rarg0), Rtmp
+		// AND	Rarg1, Rtmp
+		// SC	Rtmp, (Rarg0)
+		// BEQ	Rtmp, -3(PC)
+		// SYNC
+		{name: "LoweredAtomicAnd32", argLength: 3, reg: gpstore, asm: "AND", faultOnNilArg0: true, hasSideEffects: true, unsafePoint: true},
+		{name: "LoweredAtomicOr32", argLength: 3, reg: gpstore, asm: "OR", faultOnNilArg0: true, hasSideEffects: true, unsafePoint: true},
 
 		// atomic loads.
 		// load from arg0. arg1=mem.

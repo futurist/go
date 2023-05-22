@@ -16,6 +16,7 @@ import (
 	"cmd/compile/internal/inline"
 	"cmd/compile/internal/ir"
 	"cmd/compile/internal/logopt"
+	"cmd/compile/internal/loopvar"
 	"cmd/compile/internal/noder"
 	"cmd/compile/internal/pgo"
 	"cmd/compile/internal/pkginit"
@@ -255,7 +256,11 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	base.Timer.Start("fe", "pgoprofile")
 	var profile *pgo.Profile
 	if base.Flag.PgoProfile != "" {
-		profile = pgo.New(base.Flag.PgoProfile)
+		var err error
+		profile, err = pgo.New(base.Flag.PgoProfile)
+		if err != nil {
+			log.Fatalf("%s: PGO error: %v", base.Flag.PgoProfile, err)
+		}
 	}
 
 	// Inlining
@@ -265,10 +270,12 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	}
 	noder.MakeWrappers(typecheck.Target) // must happen after inlining
 
-	// Devirtualize.
+	// Devirtualize and get variable capture right in for loops
+	var transformed []loopvar.VarAndLoop
 	for _, n := range typecheck.Target.Decls {
 		if n.Op() == ir.ODCLFUNC {
 			devirtualize.Func(n.(*ir.Func))
+			transformed = append(transformed, loopvar.ForCapture(n.(*ir.Func))...)
 		}
 	}
 	ir.CurFunc = nil
@@ -292,6 +299,8 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	// because large values may contain pointers, it must happen early.
 	base.Timer.Start("fe", "escapes")
 	escape.Funcs(typecheck.Target.Decls)
+
+	loopvar.LogTransformations(transformed)
 
 	// Collect information for go:nowritebarrierrec
 	// checking. This must happen before transforming closures during Walk
@@ -327,7 +336,7 @@ func Main(archInit func(*ssagen.ArchInfo)) {
 	}
 
 	// Add keep relocations for global maps.
-	if base.Flag.WrapGlobalMapInit {
+	if base.Debug.WrapGlobalMapCtl != 1 {
 		staticinit.AddKeepRelocations()
 	}
 

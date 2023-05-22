@@ -775,7 +775,7 @@ var ymshufb = []ytab{
 }
 
 // It should never have more than 1 entry,
-// because some optab entries you opcode secuences that
+// because some optab entries have opcode sequences that
 // are longer than 2 bytes (zoffset=2 here),
 // ROUNDPD and ROUNDPS and recently added BLENDPD,
 // to name a few.
@@ -1774,6 +1774,7 @@ var optab =
 	{ALSSW, ym_rl, Pe, opBytes{0x0f, 0xb2}},
 	{ALSSL, ym_rl, Px, opBytes{0x0f, 0xb2}},
 	{ALSSQ, ym_rl, Pw, opBytes{0x0f, 0xb2}},
+	{ARDPID, yrdrand, Pf3, opBytes{0xc7, 07}},
 
 	{ABLENDPD, yxshuf, Pq, opBytes{0x3a, 0x0d, 0}},
 	{ABLENDPS, yxshuf, Pq, opBytes{0x3a, 0x0c, 0}},
@@ -4242,6 +4243,11 @@ func (ab *AsmBuf) doasm(ctxt *obj.Link, cursym *obj.LSym, p *obj.Prog) {
 		AVPGATHERQD,
 		AVPGATHERDQ,
 		AVPGATHERQQ:
+		if p.GetFrom3() == nil {
+			// gathers need a 3rd arg. See issue 58822.
+			ctxt.Diag("need a third arg for gather instruction: %v", p)
+			return
+		}
 		// AVX512 gather requires explicit K mask.
 		if p.GetFrom3().Reg >= REG_K0 && p.GetFrom3().Reg <= REG_K7 {
 			if !avx512gatherValid(ctxt, p) {

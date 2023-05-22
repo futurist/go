@@ -83,11 +83,11 @@ func versions(ctx context.Context, path string, allowed AllowedFunc) (versions [
 	// Note: modfetch.Lookup and repo.Versions are cached,
 	// so there's no need for us to add extra caching here.
 	err = modfetch.TryProxies(func(proxy string) error {
-		repo, err := lookupRepo(proxy, path)
+		repo, err := lookupRepo(ctx, proxy, path)
 		if err != nil {
 			return err
 		}
-		allVersions, err := repo.Versions("")
+		allVersions, err := repo.Versions(ctx, "")
 		if err != nil {
 			return err
 		}
@@ -111,14 +111,12 @@ func versions(ctx context.Context, path string, allowed AllowedFunc) (versions [
 //
 // Since the version of a main module is not found in the version list,
 // it has no previous version.
-func previousVersion(m module.Version) (module.Version, error) {
-	// TODO(golang.org/issue/38714): thread tracing context through MVS.
-
+func previousVersion(ctx context.Context, m module.Version) (module.Version, error) {
 	if m.Version == "" && MainModules.Contains(m.Path) {
 		return module.Version{Path: m.Path, Version: "none"}, nil
 	}
 
-	list, _, err := versions(context.TODO(), m.Path, CheckAllowed)
+	list, _, err := versions(ctx, m.Path, CheckAllowed)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return module.Version{Path: m.Path, Version: "none"}, nil
@@ -133,5 +131,6 @@ func previousVersion(m module.Version) (module.Version, error) {
 }
 
 func (*mvsReqs) Previous(m module.Version) (module.Version, error) {
-	return previousVersion(m)
+	// TODO(golang.org/issue/38714): thread tracing context through MVS.
+	return previousVersion(context.TODO(), m)
 }

@@ -575,6 +575,10 @@ func (o *OffsetWriter) Write(p []byte) (n int, err error) {
 }
 
 func (o *OffsetWriter) WriteAt(p []byte, off int64) (n int, err error) {
+	if off < 0 {
+		return 0, errOffset
+	}
+
 	off += o.base
 	return o.w.WriteAt(p, off)
 }
@@ -694,10 +698,6 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 func ReadAll(r Reader) ([]byte, error) {
 	b := make([]byte, 0, 512)
 	for {
-		if len(b) == cap(b) {
-			// Add more capacity (let append pick how much).
-			b = append(b, 0)[:len(b)]
-		}
 		n, err := r.Read(b[len(b):cap(b)])
 		b = b[:len(b)+n]
 		if err != nil {
@@ -705,6 +705,11 @@ func ReadAll(r Reader) ([]byte, error) {
 				err = nil
 			}
 			return b, err
+		}
+
+		if len(b) == cap(b) {
+			// Add more capacity (let append pick how much).
+			b = append(b, 0)[:len(b)]
 		}
 	}
 }

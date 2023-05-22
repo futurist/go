@@ -59,22 +59,27 @@ var bootstrapDirs = []string{
 	"debug/elf",
 	"debug/macho",
 	"debug/pe",
+	"go/build/constraint",
 	"go/constant",
 	"internal/abi",
 	"internal/coverage",
+	"internal/bisect",
 	"internal/buildcfg",
 	"internal/goarch",
+	"internal/godebugs",
 	"internal/goexperiment",
 	"internal/goroot",
 	"internal/goversion",
 	"internal/pkgbits",
+	"internal/platform",
 	"internal/profile",
 	"internal/race",
 	"internal/saferio",
-	"internal/platform",
+	"internal/syscall/unix",
 	"internal/types/errors",
 	"internal/unsafeheader",
 	"internal/xcoff",
+	"internal/zstd",
 	"math/big",
 	"math/bits",
 	"sort",
@@ -117,6 +122,7 @@ func bootstrapBuildTools() {
 
 	mkbuildcfg(pathf("%s/src/internal/buildcfg/zbootstrap.go", goroot))
 	mkobjabi(pathf("%s/src/cmd/internal/objabi/zbootstrap.go", goroot))
+	mkzosarch("", pathf("%s/src/internal/platform/zosarch.go", goroot))
 
 	// Use $GOROOT/pkg/bootstrap as the bootstrap workspace root.
 	// We use a subdirectory of $GOROOT/pkg because that's the
@@ -130,7 +136,7 @@ func bootstrapBuildTools() {
 	xmkdirall(base)
 
 	// Copy source code into $GOROOT/pkg/bootstrap and rewrite import paths.
-	writefile("module bootstrap\n", pathf("%s/%s", base, "go.mod"), 0)
+	writefile("module bootstrap\ngo 1.20\n", pathf("%s/%s", base, "go.mod"), 0)
 	for _, dir := range bootstrapDirs {
 		recurse := strings.HasSuffix(dir, "/...")
 		dir = strings.TrimSuffix(dir, "/...")
@@ -302,7 +308,7 @@ func bootstrapFixImports(srcFile string) string {
 			continue
 		}
 		if strings.HasPrefix(line, `import "`) || strings.HasPrefix(line, `import . "`) ||
-			inBlock && (strings.HasPrefix(line, "\t\"") || strings.HasPrefix(line, "\t. \"") || strings.HasPrefix(line, "\texec \"")) {
+			inBlock && (strings.HasPrefix(line, "\t\"") || strings.HasPrefix(line, "\t. \"") || strings.HasPrefix(line, "\texec \"") || strings.HasPrefix(line, "\trtabi \"")) {
 			line = strings.Replace(line, `"cmd/`, `"bootstrap/cmd/`, -1)
 			for _, dir := range bootstrapDirs {
 				if strings.HasPrefix(dir, "cmd/") {

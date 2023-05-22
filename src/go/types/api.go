@@ -116,7 +116,7 @@ type Config struct {
 
 	// GoVersion describes the accepted Go language version. The string
 	// must follow the format "go%d.%d" (e.g. "go1.12") or it must be
-	// empty; an empty string indicates the latest language version.
+	// empty; an empty string disables Go language version checks.
 	// If the format is invalid, invoking the type checker will cause a
 	// panic.
 	GoVersion string
@@ -281,6 +281,10 @@ type Info struct {
 	InitOrder []*Initializer
 }
 
+func (info *Info) recordTypes() bool {
+	return info.Types != nil
+}
+
 // TypeOf returns the type of expression e, or nil if not found.
 // Precondition: the Types, Uses and Defs maps are populated.
 func (info *Info) TypeOf(e ast.Expr) Type {
@@ -428,7 +432,7 @@ func AssertableTo(V *Interface, T Type) bool {
 	if T.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).newAssertableTo(V, T, nil)
+	return (*Checker)(nil).newAssertableTo(nopos, V, T, nil)
 }
 
 // AssignableTo reports whether a value of type V is assignable to a variable
@@ -466,7 +470,7 @@ func Implements(V Type, T *Interface) bool {
 	if V.Underlying() == Typ[Invalid] {
 		return false
 	}
-	return (*Checker)(nil).implements(V, T, false, nil)
+	return (*Checker)(nil).implements(0, V, T, false, nil)
 }
 
 // Satisfies reports whether type V satisfies the constraint T.
@@ -474,7 +478,7 @@ func Implements(V Type, T *Interface) bool {
 // The behavior of Satisfies is unspecified if V is Typ[Invalid] or an uninstantiated
 // generic type.
 func Satisfies(V Type, T *Interface) bool {
-	return (*Checker)(nil).implements(V, T, true, nil)
+	return (*Checker)(nil).implements(0, V, T, true, nil)
 }
 
 // Identical reports whether x and y are identical types.

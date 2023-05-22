@@ -202,9 +202,11 @@
 //		run through go run and go test respectively.
 //	-pgo file
 //		specify the file path of a profile for profile-guided optimization (PGO).
-//		Special name "auto" lets the go command select a file named
-//		"default.pgo" in the main package's directory if that file exists.
-//		Special name "off" turns off PGO.
+//		When the special name "auto" is specified, for each main package in the
+//		build, the go command selects a file named "default.pgo" in the package's
+//		directory if that file exists, and applies it to the (transitive)
+//		dependencies of the main package (other packages are not affected).
+//		Special name "off" turns off PGO. The default is "auto".
 //	-pkgdir dir
 //		install and load all packages from dir instead of the usual locations.
 //		For example, when building with a non-standard configuration,
@@ -565,6 +567,11 @@
 //		generator, containing the Go toolchain and standard library.
 //	$DOLLAR
 //		A dollar sign.
+//	$PATH
+//		The $PATH of the parent process, with $GOROOT/bin
+//		placed at the beginning. This causes generators
+//		that execute 'go' commands to use the same 'go'
+//		as the parent 'go generate' command.
 //
 // Other than variable substitution and quoted-string evaluation, no
 // special processing such as "globbing" is performed on the command
@@ -756,7 +763,8 @@
 // Setting GODEBUG=installgoroot=all restores the use of
 // $GOROOT/pkg/$GOOS_$GOARCH.
 //
-// For more about the build flags, see 'go help build'.
+// For more about build flags, see 'go help build'.
+//
 // For more about specifying packages, see 'go help packages'.
 //
 // See also: go build, go get, go clean.
@@ -880,9 +888,9 @@
 //	    GOROOT        string   // Go root
 //	    GOPATH        string   // Go path
 //	    CgoEnabled    bool     // whether cgo can be used
-//	    UseAllFiles   bool     // use files regardless of +build lines, file names
+//	    UseAllFiles   bool     // use files regardless of //go:build lines, file names
 //	    Compiler      string   // compiler to assume when computing target paths
-//	    BuildTags     []string // build constraints to match in +build lines
+//	    BuildTags     []string // build constraints to match in //go:build lines
 //	    ToolTags      []string // toolchain-specific build constraints
 //	    ReleaseTags   []string // releases the current release is compatible with
 //	    InstallSuffix string   // suffix to use in the name of the install dir
@@ -1700,6 +1708,10 @@
 // error. (The go command's standard error is reserved for printing
 // errors building the tests.)
 //
+// The go command places $GOROOT/bin at the beginning of $PATH
+// in the test's environment, so that tests that execute
+// 'go' commands use the same 'go' as the parent 'go test' command.
+//
 // Go test runs in two different modes:
 //
 // The first, called local directory mode, occurs when go test is
@@ -2086,9 +2098,9 @@
 // # Environment variables
 //
 // The go command and the tools it invokes consult environment variables
-// for configuration. If an environment variable is unset, the go command
-// uses a sensible default setting. To see the effective setting of the
-// variable <NAME>, run 'go env <NAME>'. To change the default setting,
+// for configuration. If an environment variable is unset or empty, the go
+// command uses a sensible default setting. To see the effective setting of
+// the variable <NAME>, run 'go env <NAME>'. To change the default setting,
 // run 'go env -w <NAME>=<VALUE>'. Defaults changed using 'go env -w'
 // are recorded in a Go environment configuration file stored in the
 // per-user configuration directory, as reported by os.UserConfigDir.
@@ -2116,7 +2128,7 @@
 //	GOMODCACHE
 //		The directory where the go command will store downloaded modules.
 //	GODEBUG
-//		Enable various debugging facilities. See 'go doc runtime'
+//		Enable various debugging facilities. See https://go.dev/doc/godebug
 //		for details.
 //	GOENV
 //		The location of the Go environment configuration file.
@@ -2550,6 +2562,8 @@
 //
 // Get never checks out or updates code stored in vendor directories.
 //
+// For more about build flags, see 'go help build'.
+//
 // For more about specifying packages, see 'go help packages'.
 //
 // For more about how 'go get' finds source code to
@@ -2799,7 +2813,7 @@
 //
 // Many commands apply to a set of packages:
 //
-//	go action [packages]
+//	go <action> [packages]
 //
 // Usually, [packages] is a list of import paths.
 //

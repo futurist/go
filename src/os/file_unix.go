@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-//go:build unix || (js && wasm)
+//go:build unix || (js && wasm) || wasip1
 
 package os
 
 import (
 	"internal/poll"
 	"internal/syscall/unix"
+	"io/fs"
 	"runtime"
 	"syscall"
+	_ "unsafe" // for go:linkname
 )
+
+const _UTIME_OMIT = unix.UTIME_OMIT
 
 // fixLongPath is a noop on non-Windows platforms.
 func fixLongPath(path string) string {
@@ -103,7 +107,27 @@ func NewFile(fd uintptr, name string) *File {
 	if nb, err := unix.IsNonblock(int(fd)); err == nil && nb {
 		kind = kindNonBlock
 	}
-	return newFile(fd, name, kind)
+	f := newFile(fd, name, kind)
+	if flags, err := unix.Fcntl(int(fd), syscall.F_GETFL, 0); err == nil {
+		f.appendMode = flags&syscall.O_APPEND != 0
+	}
+	return f
+}
+
+// net_newUnixFile is a hidden entry point called by net.conn.File.
+// This is used so that a nonblocking network connection will become
+// blocking if code calls the Fd method. We don't want that for direct
+// calls to NewFile: passing a nonblocking descriptor to NewFile should
+// remain nonblocking if you get it back using Fd. But for net.conn.File
+// the call to NewFile is hidden from the user. Historically in that case
+// the Fd method has returned a blocking descriptor, and we want to
+// retain that behavior because existing code expects it and depends on it.
+//
+//go:linkname net_newUnixFile net.newUnixFile
+func net_newUnixFile(fd uintptr, name string) *File {
+	f := newFile(fd, name, kindNonBlock)
+	f.nonblock = true // tell Fd to return blocking descriptor
+	return f
 }
 
 // newFileKind describes the kind of file to newFile.
@@ -113,12 +137,12 @@ const (
 	// kindNewFile means that the descriptor was passed to us via NewFile.
 	kindNewFile newFileKind = iota
 	// kindOpenFile means that the descriptor was opened using
-	// Open, Create, or OpenFile.
+	// Open, Create, or OpenFile (without O_NONBLOCK).
 	kindOpenFile
 	// kindPipe means that the descriptor was opened using Pipe.
 	kindPipe
-	// kindNonBlock means that the descriptor was passed to us via NewFile,
-	// and the descriptor is already in non-blocking mode.
+	// kindNonBlock means that the descriptor is already in
+	// non-blocking mode.
 	kindNonBlock
 	// kindNoPoll means that we should not put the descriptor into
 	// non-blocking mode, because we know it is not a pipe or FIFO.
@@ -181,7 +205,9 @@ func newFile(fd uintptr, name string, kind newFileKind) *File {
 	clearNonBlock := false
 	if pollable {
 		if kind == kindNonBlock {
-			f.nonblock = true
+			// The descriptor is already in non-blocking mode.
+			// We only set f.nonblock if we put the file into
+			// non-blocking mode.
 		} else if err := syscall.SetNonblock(fdi, true); err == nil {
 			f.nonblock = true
 			clearNonBlock = true
@@ -207,6 +233,8 @@ func newFile(fd uintptr, name string, kind newFileKind) *File {
 	return f
 }
 
+func sigpipe() // implemented in package runtime
+
 // epipecheck raises SIGPIPE if we get an EPIPE error on standard
 // output or standard error. See the SIGPIPE docs in os/signal, and
 // issue 11845.
@@ -231,9 +259,10 @@ func openFileNolog(name string, flag int, perm FileMode) (*File, error) {
 	}
 
 	var r int
+	var s poll.SysFile
 	for {
 		var e error
-		r, e = syscall.Open(name, flag|syscall.O_CLOEXEC, syscallMode(perm))
+		r, s, e = open(name, flag|syscall.O_CLOEXEC, syscallMode(perm))
 		if e == nil {
 			break
 		}
@@ -257,7 +286,14 @@ func openFileNolog(name string, flag int, perm FileMode) (*File, error) {
 		syscall.CloseOnExec(r)
 	}
 
-	return newFile(uintptr(r), name, kindOpenFile), nil
+	kind := kindOpenFile
+	if unix.HasNonblockFlag(flag) {
+		kind = kindNonBlock
+	}
+
+	f := newFile(uintptr(r), name, kind)
+	f.pfd.SysFile = s
+	return f, nil
 }
 
 func (file *file) close() error {
@@ -399,7 +435,7 @@ func Readlink(name string) (string, error) {
 			}
 		}
 		// buffer too small
-		if runtime.GOOS == "aix" && e == syscall.ERANGE {
+		if (runtime.GOOS == "aix" || runtime.GOOS == "wasip1") && e == syscall.ERANGE {
 			continue
 		}
 		if e != nil {
@@ -427,6 +463,10 @@ func (d *unixDirent) Info() (FileInfo, error) {
 		return d.info, nil
 	}
 	return lstat(d.parent + "/" + d.name)
+}
+
+func (d *unixDirent) String() string {
+	return fs.FormatDirEntry(d)
 }
 
 func newUnixDirent(parent, name string, typ FileMode) (DirEntry, error) {

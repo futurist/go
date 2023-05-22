@@ -173,7 +173,7 @@ type Transport struct {
 	// If non-nil, HTTP/2 support may not be enabled by default.
 	TLSClientConfig *tls.Config
 
-	// TLSHandshakeTimeout specifies the maximum amount of time waiting to
+	// TLSHandshakeTimeout specifies the maximum amount of time to
 	// wait for a TLS handshake. Zero means no timeout.
 	TLSHandshakeTimeout time.Duration
 
@@ -2452,7 +2452,10 @@ func (pc *persistConn) writeLoop() {
 // maxWriteWaitBeforeConnReuse is how long the a Transport RoundTrip
 // will wait to see the Request's Body.Write result after getting a
 // response from the server. See comments in (*persistConn).wroteRequest.
-const maxWriteWaitBeforeConnReuse = 50 * time.Millisecond
+//
+// In tests, we set this to a large value to avoid flakiness from inconsistent
+// recycling of connections.
+var maxWriteWaitBeforeConnReuse = 50 * time.Millisecond
 
 // wroteRequest is a check before recycling a connection that the previous write
 // (from writeLoop above) happened and was successful.

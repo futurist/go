@@ -435,33 +435,23 @@ func (c *comparer) identical(x, y Type, p *ifacePair) bool {
 
 	case *Named:
 		// Two named types are identical if their type names originate
-		// in the same type declaration.
+		// in the same type declaration; if they are instantiated they
+		// must have identical type argument lists.
 		if y, ok := y.(*Named); ok {
+			// check type arguments before origins to match unifier
+			// (for correct source code we need to do all checks so
+			// order doesn't matter)
 			xargs := x.TypeArgs().list()
 			yargs := y.TypeArgs().list()
-
 			if len(xargs) != len(yargs) {
 				return false
 			}
-
-			if len(xargs) > 0 {
-				// Instances are identical if their original type and type arguments
-				// are identical.
-				if !Identical(x.Origin(), y.Origin()) {
+			for i, xarg := range xargs {
+				if !Identical(xarg, yargs[i]) {
 					return false
 				}
-				for i, xa := range xargs {
-					if !Identical(xa, yargs[i]) {
-						return false
-					}
-				}
-				return true
 			}
-
-			// TODO(gri) Why is x == y not sufficient? And if it is,
-			//           we can just return false here because x == y
-			//           is caught in the very beginning of this function.
-			return x.obj == y.obj
+			return indenticalOrigin(x, y)
 		}
 
 	case *TypeParam:
@@ -475,6 +465,12 @@ func (c *comparer) identical(x, y Type, p *ifacePair) bool {
 	}
 
 	return false
+}
+
+// identicalOrigin reports whether x and y originated in the same declaration.
+func indenticalOrigin(x, y *Named) bool {
+	// TODO(gri) is this correct?
+	return x.Origin().obj == y.Origin().obj
 }
 
 // identicalInstance reports if two type instantiations are identical.
@@ -515,4 +511,24 @@ func Default(t Type) Type {
 		}
 	}
 	return t
+}
+
+// maxType returns the "largest" type that encompasses both x and y.
+// If x and y are different untyped numeric types, the result is the type of x or y
+// that appears later in this list: integer, rune, floating-point, complex.
+// Otherwise, if x != y, the result is nil.
+func maxType(x, y Type) Type {
+	// We only care about untyped types (for now), so == is good enough.
+	// TODO(gri) investigate generalizing this function to simplify code elsewhere
+	if x == y {
+		return x
+	}
+	if isUntyped(x) && isUntyped(y) && isNumeric(x) && isNumeric(y) {
+		// untyped types are basic types
+		if x.(*Basic).kind > y.(*Basic).kind {
+			return x
+		}
+		return y
+	}
+	return nil
 }

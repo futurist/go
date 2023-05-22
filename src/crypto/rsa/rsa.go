@@ -64,7 +64,7 @@ func (pub *PublicKey) Equal(x crypto.PublicKey) bool {
 	if !ok {
 		return false
 	}
-	return pub.N.Cmp(xx.N) == 0 && pub.E == xx.E
+	return bigIntEqual(pub.N, xx.N) && pub.E == xx.E
 }
 
 // OAEPOptions is an interface for passing options to OAEP decryption using the
@@ -130,18 +130,24 @@ func (priv *PrivateKey) Equal(x crypto.PrivateKey) bool {
 	if !ok {
 		return false
 	}
-	if !priv.PublicKey.Equal(&xx.PublicKey) || priv.D.Cmp(xx.D) != 0 {
+	if !priv.PublicKey.Equal(&xx.PublicKey) || !bigIntEqual(priv.D, xx.D) {
 		return false
 	}
 	if len(priv.Primes) != len(xx.Primes) {
 		return false
 	}
 	for i := range priv.Primes {
-		if priv.Primes[i].Cmp(xx.Primes[i]) != 0 {
+		if !bigIntEqual(priv.Primes[i], xx.Primes[i]) {
 			return false
 		}
 	}
 	return true
+}
+
+// bigIntEqual reports whether a and b are equal leaking only their bit length
+// through timing side-channels.
+func bigIntEqual(a, b *big.Int) bool {
+	return subtle.ConstantTimeCompare(a.Bytes(), b.Bytes()) == 1
 }
 
 // Sign signs digest with priv, reading randomness from rand. If opts is a
@@ -204,7 +210,7 @@ type PrecomputedValues struct {
 	// differently in PKCS #1 and interoperability is sufficiently
 	// important that we mirror this.
 	//
-	// Note: these values are still filled in by Precompute for
+	// Deprecated: These values are still filled in by Precompute for
 	// backwards compatibility but are not used. Multi-prime RSA is very rare,
 	// and is implemented by this package without CRT optimizations to limit
 	// complexity.
@@ -278,7 +284,7 @@ func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
 // This package does not implement CRT optimizations for multi-prime RSA, so the
 // keys with more than two primes will have worse performance.
 //
-// Note: The use of this function with a number of primes different from
+// Deprecated: The use of this function with a number of primes different from
 // two is not recommended for the above security, compatibility, and performance
 // reasons. Use GenerateKey instead.
 //
@@ -286,7 +292,8 @@ func GenerateKey(random io.Reader, bits int) (*PrivateKey, error) {
 func GenerateMultiPrimeKey(random io.Reader, nprimes int, bits int) (*PrivateKey, error) {
 	randutil.MaybeReadByte(random)
 
-	if boring.Enabled && random == boring.RandReader && nprimes == 2 && (bits == 2048 || bits == 3072) {
+	if boring.Enabled && random == boring.RandReader && nprimes == 2 &&
+		(bits == 2048 || bits == 3072 || bits == 4096) {
 		bN, bE, bD, bP, bQ, bDp, bDq, bQinv, err := boring.GenerateKeyRSA(bits)
 		if err != nil {
 			return nil, err

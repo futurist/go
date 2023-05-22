@@ -124,6 +124,16 @@ func TestEqualFunc(t *testing.T) {
 	}
 }
 
+func BenchmarkEqualFunc_Large(b *testing.B) {
+	type Large [4 * 1024]byte
+
+	xs := make([]Large, 1024)
+	ys := make([]Large, 1024)
+	for i := 0; i < b.N; i++ {
+		_ = EqualFunc(xs, ys, func(x, y Large) bool { return x == y })
+	}
+}
+
 var indexTests = []struct {
 	s    []int
 	v    int
@@ -170,6 +180,15 @@ func equalToIndex[T any](f func(T, T) bool, v1 T) func(T) bool {
 	}
 }
 
+func BenchmarkIndex_Large(b *testing.B) {
+	type Large [4 * 1024]byte
+
+	ss := make([]Large, 1024)
+	for i := 0; i < b.N; i++ {
+		_ = Index(ss, Large{1})
+	}
+}
+
 func TestIndexFunc(t *testing.T) {
 	for _, test := range indexTests {
 		if got := IndexFunc(test.s, equalToIndex(equal[int], test.v)); got != test.want {
@@ -183,6 +202,17 @@ func TestIndexFunc(t *testing.T) {
 	}
 	if got := IndexFunc(s1, equalToIndex(strings.EqualFold, "HI")); got != 0 {
 		t.Errorf("IndexFunc(%v, equalToIndex(strings.EqualFold, %q)) = %d, want %d", s1, "HI", got, 0)
+	}
+}
+
+func BenchmarkIndexFunc_Large(b *testing.B) {
+	type Large [4 * 1024]byte
+
+	ss := make([]Large, 1024)
+	for i := 0; i < b.N; i++ {
+		_ = IndexFunc(ss, func(e Large) bool {
+			return e == Large{1}
+		})
 	}
 }
 
@@ -256,6 +286,45 @@ func TestInsert(t *testing.T) {
 			t.Errorf("Insert(%v, %d, %v...) = %v, want %v", test.s, test.i, test.add, got, test.want)
 		}
 	}
+
+	if !testenv.OptimizationOff() && !race.Enabled {
+		// Allocations should be amortized.
+		const count = 50
+		n := testing.AllocsPerRun(10, func() {
+			s := []int{1, 2, 3}
+			for i := 0; i < count; i++ {
+				s = Insert(s, 0, 1)
+			}
+		})
+		if n > count/2 {
+			t.Errorf("too many allocations inserting %d elements: got %v, want less than %d", count, n, count/2)
+		}
+	}
+}
+
+func TestInsertOverlap(t *testing.T) {
+	const N = 10
+	a := make([]int, N)
+	want := make([]int, 2*N)
+	for n := 0; n <= N; n++ { // length
+		for i := 0; i <= n; i++ { // insertion point
+			for x := 0; x <= N; x++ { // start of inserted data
+				for y := x; y <= N; y++ { // end of inserted data
+					for k := 0; k < N; k++ {
+						a[k] = k
+					}
+					want = want[:0]
+					want = append(want, a[:i]...)
+					want = append(want, a[x:y]...)
+					want = append(want, a[i:n]...)
+					got := Insert(a[:n], i, a[x:y]...)
+					if !Equal(got, want) {
+						t.Errorf("Insert with overlap failed n=%d i=%d x=%d y=%d, got %v want %v", n, i, x, y, got, want)
+					}
+				}
+			}
+		}
+	}
 }
 
 var deleteTests = []struct {
@@ -300,6 +369,52 @@ func TestDelete(t *testing.T) {
 		copy := Clone(test.s)
 		if got := Delete(copy, test.i, test.j); !Equal(got, test.want) {
 			t.Errorf("Delete(%v, %d, %d) = %v, want %v", test.s, test.i, test.j, got, test.want)
+		}
+	}
+}
+
+var deleteFuncTests = []struct {
+	s    []int
+	fn   func(int) bool
+	want []int
+}{
+	{
+		nil,
+		func(int) bool { return true },
+		nil,
+	},
+	{
+		[]int{1, 2, 3},
+		func(int) bool { return true },
+		nil,
+	},
+	{
+		[]int{1, 2, 3},
+		func(int) bool { return false },
+		[]int{1, 2, 3},
+	},
+	{
+		[]int{1, 2, 3},
+		func(i int) bool { return i > 2 },
+		[]int{1, 2},
+	},
+	{
+		[]int{1, 2, 3},
+		func(i int) bool { return i < 2 },
+		[]int{2, 3},
+	},
+	{
+		[]int{10, 2, 30},
+		func(i int) bool { return i >= 10 },
+		[]int{2},
+	},
+}
+
+func TestDeleteFunc(t *testing.T) {
+	for i, test := range deleteFuncTests {
+		copy := Clone(test.s)
+		if got := DeleteFunc(copy, test.fn); !Equal(got, test.want) {
+			t.Errorf("DeleteFunc case %d: got %v, want %v", i, got, test.want)
 		}
 	}
 }
@@ -408,7 +523,15 @@ func BenchmarkCompact(b *testing.B) {
 			}
 		})
 	}
+}
 
+func BenchmarkCompact_Large(b *testing.B) {
+	type Large [4 * 1024]byte
+
+	ss := make([]Large, 1024)
+	for i := 0; i < b.N; i++ {
+		_ = Compact(ss)
+	}
 }
 
 func TestCompactFunc(t *testing.T) {
@@ -424,6 +547,15 @@ func TestCompactFunc(t *testing.T) {
 	want := []string{"a", "B"}
 	if got := CompactFunc(copy, strings.EqualFold); !Equal(got, want) {
 		t.Errorf("CompactFunc(%v, strings.EqualFold) = %v, want %v", s1, got, want)
+	}
+}
+
+func BenchmarkCompactFunc_Large(b *testing.B) {
+	type Large [4 * 1024]byte
+
+	ss := make([]Large, 1024)
+	for i := 0; i < b.N; i++ {
+		_ = CompactFunc(ss, func(a, b Large) bool { return a == b })
 	}
 }
 
@@ -491,6 +623,34 @@ func TestClip(t *testing.T) {
 	}
 }
 
+func TestReverse(t *testing.T) {
+	even := []int{3, 1, 4, 1, 5, 9} // len = 6
+	Reverse(even)
+	if want := []int{9, 5, 1, 4, 1, 3}; !Equal(even, want) {
+		t.Errorf("Reverse(even) = %v, want %v", even, want)
+	}
+
+	odd := []int{3, 1, 4, 1, 5, 9, 2} // len = 7
+	Reverse(odd)
+	if want := []int{2, 9, 5, 1, 4, 1, 3}; !Equal(odd, want) {
+		t.Errorf("Reverse(odd) = %v, want %v", odd, want)
+	}
+
+	words := strings.Fields("one two three")
+	Reverse(words)
+	if want := strings.Fields("three two one"); !Equal(words, want) {
+		t.Errorf("Reverse(words) = %v, want %v", words, want)
+	}
+
+	singleton := []string{"one"}
+	Reverse(singleton)
+	if want := []string{"one"}; !Equal(singleton, want) {
+		t.Errorf("Reverse(singeleton) = %v, want %v", singleton, want)
+	}
+
+	Reverse[string](nil)
+}
+
 // naiveReplace is a baseline implementation to the Replace function.
 func naiveReplace[S ~[]E, E any](s S, i, j int, v ...E) S {
 	s = Delete(s, i, j)
@@ -555,6 +715,33 @@ func TestReplacePanics(t *testing.T) {
 	}
 }
 
+func TestReplaceOverlap(t *testing.T) {
+	const N = 10
+	a := make([]int, N)
+	want := make([]int, 2*N)
+	for n := 0; n <= N; n++ { // length
+		for i := 0; i <= n; i++ { // insertion point 1
+			for j := i; j <= n; j++ { // insertion point 2
+				for x := 0; x <= N; x++ { // start of inserted data
+					for y := x; y <= N; y++ { // end of inserted data
+						for k := 0; k < N; k++ {
+							a[k] = k
+						}
+						want = want[:0]
+						want = append(want, a[:i]...)
+						want = append(want, a[x:y]...)
+						want = append(want, a[j:n]...)
+						got := Replace(a[:n], i, j, a[x:y]...)
+						if !Equal(got, want) {
+							t.Errorf("Insert with overlap failed n=%d i=%d j=%d x=%d y=%d, got %v want %v", n, i, j, x, y, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 func BenchmarkReplace(b *testing.B) {
 	cases := []struct {
 		name string
@@ -602,4 +789,59 @@ func BenchmarkReplace(b *testing.B) {
 		})
 	}
 
+}
+
+func TestRotate(t *testing.T) {
+	const N = 10
+	s := make([]int, 0, N)
+	for n := 0; n < N; n++ {
+		for r := 0; r < n; r++ {
+			s = s[:0]
+			for i := 0; i < n; i++ {
+				s = append(s, i)
+			}
+			rotateLeft(s, r)
+			for i := 0; i < n; i++ {
+				if s[i] != (i+r)%n {
+					t.Errorf("expected n=%d r=%d i:%d want:%d got:%d", n, r, i, (i+r)%n, s[i])
+				}
+			}
+		}
+	}
+}
+
+func TestInsertGrowthRate(t *testing.T) {
+	b := make([]byte, 1)
+	maxCap := cap(b)
+	nGrow := 0
+	const N = 1e6
+	for i := 0; i < N; i++ {
+		b = Insert(b, len(b)-1, 0)
+		if cap(b) > maxCap {
+			maxCap = cap(b)
+			nGrow++
+		}
+	}
+	want := int(math.Log(N) / math.Log(1.25)) // 1.25 == growth rate for large slices
+	if nGrow > want {
+		t.Errorf("too many grows. got:%d want:%d", nGrow, want)
+	}
+}
+
+func TestReplaceGrowthRate(t *testing.T) {
+	b := make([]byte, 2)
+	maxCap := cap(b)
+	nGrow := 0
+	const N = 1e6
+	for i := 0; i < N; i++ {
+		b = Replace(b, len(b)-2, len(b)-1, 0, 0)
+		if cap(b) > maxCap {
+			maxCap = cap(b)
+			nGrow++
+		}
+	}
+	want := int(math.Log(N) / math.Log(1.25)) // 1.25 == growth rate for large slices
+	if nGrow > want {
+		t.Errorf("too many grows. got:%d want:%d", nGrow, want)
+	}
 }

@@ -11,10 +11,6 @@ stderr 'compile.*-p test/dep.*-pgoprofile=.*default\.pgo'
 go build -n -pgo=auto ./a/...
 stderr 'compile.*-pgoprofile=.*default\.pgo.*a1.go'
 
-# error with multiple packages
-! go build -n -pgo=auto ./b/...
-stderr '-pgo=auto requires exactly one main package'
-
 # build succeeds without PGO when default.pgo file is absent
 go build -n -pgo=auto -o nopgo.exe ./nopgo
 stderr 'compile.*nopgo.go'
@@ -38,6 +34,21 @@ go list -test -pgo=auto ./a/a1
 
 go list -deps -pgo=auto ./a/a1
 
+# -pgo=auto is the default. Commands without explicit -pgo=auto
+# should work as -pgo=auto.
+go build -n ./a/a1
+stderr 'compile.*-pgoprofile=.*default\.pgo.*a1.go'
+stderr 'compile.*-p test/dep.*-pgoprofile=.*default\.pgo'
+
+go build -n -o nopgo.exe ./nopgo
+stderr 'compile.*nopgo.go'
+! stderr '-pgoprofile'
+
+# -pgo=off should turn off PGO.
+go build -n -pgo=off ./a/a1
+stderr 'compile.*a1.go'
+! stderr '-pgoprofile'
+
 -- go.mod --
 module test
 go 1.20
@@ -54,14 +65,6 @@ package main_test
 import "testing"
 func TestExternal(*testing.T) {}
 -- a/a1/default.pgo --
--- b/b1/b1.go --
-package main
-func main() {}
--- b/b1/default.pgo --
--- b/b2/b2.go --
-package main
-func main() {}
--- b/b2/default.pgo --
 -- nopgo/nopgo.go --
 package main
 func main() {}

@@ -166,7 +166,7 @@ func (mm *metaMerge) beginPod() {
 //
 // Case 2: if this is a select merge (-pkg is in effect), then at
 // this point we write out a new smaller meta-data file that includes
-// only the packages of interest). At this point we also emit a merged
+// only the packages of interest. At this point we also emit a merged
 // counter data file as well.
 //
 // Case 3: if "-pcombine" is in effect, we don't write anything at
@@ -271,17 +271,6 @@ func (mm *metaMerge) emitCounters(outdir string, metaHash [16]byte) {
 		fatal("counter file write failed: %v", err)
 	}
 	mm.astate = &argstate{}
-}
-
-// NumFuncs is used while writing the counter data files; it
-// implements the 'NumFuncs' method required by the interface
-// internal/coverage/encodecounter/CounterVisitor.
-func (mm *metaMerge) NumFuncs() (int, error) {
-	rval := 0
-	for _, p := range mm.pkgs {
-		rval += len(p.ctab)
-	}
-	return rval, nil
 }
 
 // VisitFuncs is used while writing the counter data files; it

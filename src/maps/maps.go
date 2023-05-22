@@ -5,14 +5,23 @@
 // Package maps defines various functions useful with maps of any type.
 package maps
 
+import "unsafe"
+
+// keys is implemented in the runtime package.
+//
+//go:noescape
+func keys(m any, slice unsafe.Pointer)
+
 // Keys returns the keys of the map m.
 // The keys will be in an indeterminate order.
 func Keys[M ~map[K]V, K comparable, V any](m M) []K {
 	r := make([]K, 0, len(m))
-	for k := range m {
-		r = append(r, k)
-	}
+	keys(m, unsafe.Pointer(&r))
 	return r
+}
+
+func keysForBenchmarking[M ~map[K]V, K comparable, V any](m M, s []K) {
+	keys(m, unsafe.Pointer(&s))
 }
 
 // Values returns the values of the map m.
@@ -53,6 +62,9 @@ func EqualFunc[M1 ~map[K]V1, M2 ~map[K]V2, K comparable, V1, V2 any](m1 M1, m2 M
 	return true
 }
 
+// clone is implemented in the runtime package.
+func clone(m any) any
+
 // Clone returns a copy of m.  This is a shallow clone:
 // the new keys and values are set using ordinary assignment.
 func Clone[M ~map[K]V, K comparable, V any](m M) M {
@@ -60,11 +72,7 @@ func Clone[M ~map[K]V, K comparable, V any](m M) M {
 	if m == nil {
 		return nil
 	}
-	r := make(M, len(m))
-	for k, v := range m {
-		r[k] = v
-	}
-	return r
+	return clone(m).(M)
 }
 
 // Copy copies all key/value pairs in src adding them to dst.

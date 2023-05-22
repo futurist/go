@@ -39,6 +39,7 @@ import (
 	"cmd/internal/sys"
 	"encoding/binary"
 	"fmt"
+	"internal/abi"
 	"sync"
 	"sync/atomic"
 )
@@ -464,7 +465,7 @@ type LSym struct {
 	P      []byte
 	R      []Reloc
 
-	Extra *interface{} // *FuncInfo or *FileInfo, if present
+	Extra *interface{} // *FuncInfo, *VarInfo, *FileInfo, or *TypeInfo, if present
 
 	Pkg    string
 	PkgIdx int32
@@ -476,8 +477,8 @@ type FuncInfo struct {
 	Args      int32
 	Locals    int32
 	Align     int32
-	FuncID    objabi.FuncID
-	FuncFlag  objabi.FuncFlag
+	FuncID    abi.FuncID
+	FuncFlag  abi.FuncFlag
 	StartLine int32
 	Text      *Prog
 	Autot     map[*LSym]struct{}
@@ -503,6 +504,8 @@ type FuncInfo struct {
 	FuncInfoSym   *LSym
 	WasmImportSym *LSym
 	WasmImport    *WasmImport
+
+	sehUnwindInfoSym *LSym
 }
 
 // JumpTable represents a table used for implementing multi-way
@@ -534,6 +537,30 @@ func (s *LSym) Func() *FuncInfo {
 	return f
 }
 
+type VarInfo struct {
+	dwarfInfoSym *LSym
+}
+
+// NewVarInfo allocates and returns a VarInfo for LSym.
+func (s *LSym) NewVarInfo() *VarInfo {
+	if s.Extra != nil {
+		panic(fmt.Sprintf("invalid use of LSym - NewVarInfo with Extra of type %T", *s.Extra))
+	}
+	f := new(VarInfo)
+	s.Extra = new(interface{})
+	*s.Extra = f
+	return f
+}
+
+// VarInfo returns the *VarInfo associated with s, or else nil.
+func (s *LSym) VarInfo() *VarInfo {
+	if s.Extra == nil {
+		return nil
+	}
+	f, _ := (*s.Extra).(*VarInfo)
+	return f
+}
+
 // A FileInfo contains extra fields for SDATA symbols backed by files.
 // (If LSym.Extra is a *FileInfo, LSym.P == nil.)
 type FileInfo struct {
@@ -559,6 +586,22 @@ func (s *LSym) File() *FileInfo {
 	}
 	f, _ := (*s.Extra).(*FileInfo)
 	return f
+}
+
+// A TypeInfo contains information for a symbol
+// that contains a runtime._type.
+type TypeInfo struct {
+	Type interface{} // a *cmd/compile/internal/types.Type
+}
+
+func (s *LSym) NewTypeInfo() *TypeInfo {
+	if s.Extra != nil {
+		panic(fmt.Sprintf("invalid use of LSym - NewTypeInfo with Extra of type %T", *s.Extra))
+	}
+	t := new(TypeInfo)
+	s.Extra = new(interface{})
+	*s.Extra = t
+	return t
 }
 
 // WasmImport represents a WebAssembly (WASM) imported function with
@@ -909,7 +952,7 @@ func (a Attribute) String() string {
 // TextAttrString formats the symbol attributes for printing in as part of a TEXT prog.
 func (s *LSym) TextAttrString() string {
 	attr := s.Attribute.String()
-	if s.Func().FuncFlag&objabi.FuncFlag_TOPFRAME != 0 {
+	if s.Func().FuncFlag&abi.FuncFlagTopFrame != 0 {
 		if attr != "" {
 			attr += "|"
 		}
@@ -1072,6 +1115,7 @@ type LinkArch struct {
 	Preprocess     func(*Link, *LSym, ProgAlloc)
 	Assemble       func(*Link, *LSym, ProgAlloc)
 	Progedit       func(*Link, *Prog, ProgAlloc)
+	SEH            func(*Link, *LSym) *LSym
 	UnaryDst       map[As]bool // Instruction takes one operand, a destination.
 	DWARFRegisters map[int16]int16
 }

@@ -1,4 +1,4 @@
-// errorcheckwithauto -0 -m -d=inlfuncswithclosures=1 -d=inlstaticinit=1
+// errorcheckwithauto -0 -m -d=inlfuncswithclosures=1
 
 // Copyright 2015 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -195,6 +195,20 @@ func switchConst3() string { // ERROR "can inline switchConst3"
 		return "oh nose!"
 	}
 }
+func switchConst4() { // ERROR "can inline switchConst4"
+	const intSize = 32 << (^uint(0) >> 63)
+	want := func() string { // ERROR "can inline switchConst4.func1"
+		switch intSize {
+		case 32:
+			return "32"
+		case 64:
+			return "64"
+		default:
+			panic("unreachable")
+		}
+	}() // ERROR "inlining call to switchConst4.func1"
+	_ = want
+}
 
 func inlineRangeIntoMe(data []int) { // ERROR "can inline inlineRangeIntoMe" "data does not escape"
 	rangeFunc(data, 12) // ERROR "inlining call to rangeFunc"
@@ -246,13 +260,13 @@ func ff(x int) { // ERROR "can inline ff"
 	if x < 0 {
 		return
 	}
-	gg(x - 1)
+	gg(x - 1) // ERROR "inlining call to gg" "inlining call to hh"
 }
 func gg(x int) { // ERROR "can inline gg"
-	hh(x - 1)
+	hh(x - 1) // ERROR "inlining call to hh" "inlining call to ff"
 }
 func hh(x int) { // ERROR "can inline hh"
-	ff(x - 1) // ERROR "inlining call to ff"  // ERROR "inlining call to gg"
+	ff(x - 1) // ERROR "inlining call to ff" "inlining call to gg"
 }
 
 // Issue #14768 - make sure we can inline for loops.

@@ -4,6 +4,8 @@
 
 package metrics
 
+import "internal/godebugs"
+
 // Description describes a runtime metric.
 type Description struct {
 	// Name is the full name of the metric which includes the unit.
@@ -49,7 +51,7 @@ type Description struct {
 }
 
 // The English language descriptions below must be kept in sync with the
-// descriptions of each metric in doc.go.
+// descriptions of each metric in doc.go by running 'go generate'.
 var allDesc = []Description{
 	{
 		Name:        "/cgo/go-to-c-calls:calls",
@@ -194,6 +196,7 @@ var allDesc = []Description{
 	{
 		Name: "/gc/heap/allocs-by-size:bytes",
 		Description: "Distribution of heap allocations by approximate size. " +
+			"Bucket counts increase monotonically. " +
 			"Note that this does not include tiny objects as defined by " +
 			"/gc/heap/tiny/allocs:objects, only tiny blocks.",
 		Kind:       KindFloat64Histogram,
@@ -216,6 +219,7 @@ var allDesc = []Description{
 	{
 		Name: "/gc/heap/frees-by-size:bytes",
 		Description: "Distribution of freed heap allocations by approximate size. " +
+			"Bucket counts increase monotonically. " +
 			"Note that this does not include tiny objects as defined by " +
 			"/gc/heap/tiny/allocs:objects, only tiny blocks.",
 		Kind:       KindFloat64Histogram,
@@ -267,7 +271,7 @@ var allDesc = []Description{
 	},
 	{
 		Name:        "/gc/pauses:seconds",
-		Description: "Distribution individual GC-related stop-the-world pause latencies.",
+		Description: "Distribution of individual GC-related stop-the-world pause latencies. Bucket counts increase monotonically.",
 		Kind:        KindFloat64Histogram,
 		Cumulative:  true,
 	},
@@ -276,76 +280,6 @@ var allDesc = []Description{
 		Description: "The stack size of new goroutines.",
 		Kind:        KindUint64,
 		Cumulative:  false,
-	},
-	{
-		Name: "/godebug/non-default-behavior/execerrdot:events",
-		Description: "The number of non-default behaviors executed by the os/exec package " +
-			"due to a non-default GODEBUG=execerrdot=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/http2client:events",
-		Description: "The number of non-default behaviors executed by the net/http package " +
-			"due to a non-default GODEBUG=http2client=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/http2server:events",
-		Description: "The number of non-default behaviors executed by the net/http package " +
-			"due to a non-default GODEBUG=http2server=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/installgoroot:events",
-		Description: "The number of non-default behaviors executed by the go/build package " +
-			"due to a non-default GODEBUG=installgoroot=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/panicnil:events",
-		Description: "The number of non-default behaviors executed by the runtime package " +
-			"due to a non-default GODEBUG=panicnil=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/randautoseed:events",
-		Description: "The number of non-default behaviors executed by the math/rand package " +
-			"due to a non-default GODEBUG=randautoseed=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/tarinsecurepath:events",
-		Description: "The number of non-default behaviors executed by the archive/tar package " +
-			"due to a non-default GODEBUG=tarinsecurepath=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/x509sha1:events",
-		Description: "The number of non-default behaviors executed by the crypto/x509 package " +
-			"due to a non-default GODEBUG=x509sha1=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/x509usefallbackroots:events",
-		Description: "The number of non-default behaviors executed by the crypto/x509 package " +
-			"due to a non-default GODEBUG=x509usefallbackroots=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
-	},
-	{
-		Name: "/godebug/non-default-behavior/zipinsecurepath:events",
-		Description: "The number of non-default behaviors executed by the archive/zip package " +
-			"due to a non-default GODEBUG=zipinsecurepath=... setting.",
-		Kind:       KindUint64,
-		Cumulative: true,
 	},
 	{
 		Name: "/memory/classes/heap/free:bytes",
@@ -433,8 +367,9 @@ var allDesc = []Description{
 	},
 	{
 		Name:        "/sched/latencies:seconds",
-		Description: "Distribution of the time goroutines have spent in the scheduler in a runnable state before actually running.",
+		Description: "Distribution of the time goroutines have spent in the scheduler in a runnable state before actually running. Bucket counts increase monotonically.",
 		Kind:        KindFloat64Histogram,
+		Cumulative:  true,
 	},
 	{
 		Name:        "/sync/mutex/wait/total:seconds",
@@ -442,6 +377,30 @@ var allDesc = []Description{
 		Kind:        KindFloat64,
 		Cumulative:  true,
 	},
+}
+
+func init() {
+	// Insert all the non-default-reporting GODEBUGs into the table,
+	// preserving the overall sort order.
+	i := 0
+	for i < len(allDesc) && allDesc[i].Name < "/godebug/" {
+		i++
+	}
+	more := make([]Description, i, len(allDesc)+len(godebugs.All))
+	copy(more, allDesc)
+	for _, info := range godebugs.All {
+		if !info.Opaque {
+			more = append(more, Description{
+				Name: "/godebug/non-default-behavior/" + info.Name + ":events",
+				Description: "The number of non-default behaviors executed by the " +
+					info.Package + " package " + "due to a non-default " +
+					"GODEBUG=" + info.Name + "=... setting.",
+				Kind:       KindUint64,
+				Cumulative: true,
+			})
+		}
+	}
+	allDesc = append(more, allDesc[i:]...)
 }
 
 // All returns a slice of containing metric descriptions for all supported metrics.

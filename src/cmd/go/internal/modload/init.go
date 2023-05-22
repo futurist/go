@@ -62,7 +62,7 @@ var (
 	initialized bool
 
 	// These are primarily used to initialize the MainModules, and should be
-	// eventually superceded by them but are still used in cases where the module
+	// eventually superseded by them but are still used in cases where the module
 	// roots are required but MainModules hasn't been initialized yet. Set to
 	// the modRoots of the main modules.
 	// modRoots != nil implies len(modRoots) > 0
@@ -292,21 +292,29 @@ func BinDir() string {
 // operate in workspace mode. It should not be called by other commands,
 // for example 'go mod tidy', that don't operate in workspace mode.
 func InitWorkfile() {
+	workFilePath = FindGoWork(base.Cwd())
+}
+
+// FindGoWork returns the name of the go.work file for this command,
+// or the empty string if there isn't one.
+// Most code should use Init and Enabled rather than use this directly.
+// It is exported mainly for Go toolchain switching, which must process
+// the go.work very early at startup.
+func FindGoWork(wd string) string {
 	if RootMode == NoRoot {
-		workFilePath = ""
-		return
+		return ""
 	}
 
 	switch gowork := cfg.Getenv("GOWORK"); gowork {
 	case "off":
-		workFilePath = ""
+		return ""
 	case "", "auto":
-		workFilePath = findWorkspaceFile(base.Cwd())
+		return findWorkspaceFile(wd)
 	default:
 		if !filepath.IsAbs(gowork) {
-			base.Fatalf("the path provided to GOWORK must be an absolute path")
+			base.Fatalf("go: invalid GOWORK: not an absolute path")
 		}
-		workFilePath = gowork
+		return gowork
 	}
 }
 
@@ -390,6 +398,9 @@ func Init() {
 		modRoots = nil
 	} else if workFilePath != "" {
 		// We're in workspace mode, which implies module mode.
+		if cfg.ModFile != "" {
+			base.Fatalf("go: -modfile cannot be used in workspace mode")
+		}
 	} else {
 		if modRoot := findModuleRoot(base.Cwd()); modRoot == "" {
 			if cfg.ModFile != "" {
@@ -464,19 +475,30 @@ func WillBeEnabled() bool {
 		return false
 	}
 
-	if modRoot := findModuleRoot(base.Cwd()); modRoot == "" {
+	return FindGoMod(base.Cwd()) != ""
+}
+
+// FindGoMod returns the name of the go.mod file for this command,
+// or the empty string if there isn't one.
+// Most code should use Init and Enabled rather than use this directly.
+// It is exported mainly for Go toolchain switching, which must process
+// the go.mod very early at startup.
+func FindGoMod(wd string) string {
+	modRoot := findModuleRoot(wd)
+	if modRoot == "" {
 		// GO111MODULE is 'auto', and we can't find a module root.
 		// Stay in GOPATH mode.
-		return false
-	} else if search.InDir(modRoot, os.TempDir()) == "." {
+		return ""
+	}
+	if search.InDir(modRoot, os.TempDir()) == "." {
 		// If you create /tmp/go.mod for experimenting,
 		// then any tests that create work directories under /tmp
 		// will find it and get modules when they're not expecting them.
 		// It's a bit of a peculiar thing to disallow but quite mysterious
 		// when it happens. See golang.org/issue/26708.
-		return false
+		return ""
 	}
-	return true
+	return filepath.Join(modRoot, "go.mod")
 }
 
 // Enabled reports whether modules are (or must be) enabled.
@@ -1479,7 +1501,7 @@ func commitRequirements(ctx context.Context) (err error) {
 	if inWorkspaceMode() {
 		// go.mod files aren't updated in workspace mode, but we still want to
 		// update the go.work.sum file.
-		return modfetch.WriteGoSum(keepSums(ctx, loaded, requirements, addBuildListZipSums), mustHaveCompleteRequirements())
+		return modfetch.WriteGoSum(ctx, keepSums(ctx, loaded, requirements, addBuildListZipSums), mustHaveCompleteRequirements())
 	}
 	if MainModules.Len() != 1 || MainModules.ModRoot(MainModules.Versions()[0]) == "" {
 		// We aren't in a module, so we don't have anywhere to write a go.mod file.
@@ -1524,7 +1546,7 @@ func commitRequirements(ctx context.Context) (err error) {
 		// Don't write go.mod, but write go.sum in case we added or trimmed sums.
 		// 'go mod init' shouldn't write go.sum, since it will be incomplete.
 		if cfg.CmdName != "mod init" {
-			if err := modfetch.WriteGoSum(keepSums(ctx, loaded, requirements, addBuildListZipSums), mustHaveCompleteRequirements()); err != nil {
+			if err := modfetch.WriteGoSum(ctx, keepSums(ctx, loaded, requirements, addBuildListZipSums), mustHaveCompleteRequirements()); err != nil {
 				return err
 			}
 		}
@@ -1549,14 +1571,14 @@ func commitRequirements(ctx context.Context) (err error) {
 		// 'go mod init' shouldn't write go.sum, since it will be incomplete.
 		if cfg.CmdName != "mod init" {
 			if err == nil {
-				err = modfetch.WriteGoSum(keepSums(ctx, loaded, requirements, addBuildListZipSums), mustHaveCompleteRequirements())
+				err = modfetch.WriteGoSum(ctx, keepSums(ctx, loaded, requirements, addBuildListZipSums), mustHaveCompleteRequirements())
 			}
 		}
 	}()
 
 	// Make a best-effort attempt to acquire the side lock, only to exclude
 	// previous versions of the 'go' command from making simultaneous edits.
-	if unlock, err := modfetch.SideLock(); err == nil {
+	if unlock, err := modfetch.SideLock(ctx); err == nil {
 		defer unlock()
 	}
 
@@ -1591,7 +1613,8 @@ func commitRequirements(ctx context.Context) (err error) {
 // keepSums returns the set of modules (and go.mod file entries) for which
 // checksums would be needed in order to reload the same set of packages
 // loaded by the most recent call to LoadPackages or ImportFromFiles,
-// including any go.mod files needed to reconstruct the MVS result,
+// including any go.mod files needed to reconstruct the MVS result
+// or identify go versions,
 // in addition to the checksums for every module in keepMods.
 func keepSums(ctx context.Context, ld *loader, rs *Requirements, which whichSums) map[module.Version]bool {
 	// Every module in the full module graph contributes its requirements,
@@ -1611,6 +1634,16 @@ func keepSums(ctx context.Context, ld *loader, rs *Requirements, which whichSums
 			// shouldn't force loading the whole module graph).
 			if pkg.testOf != nil || (pkg.mod.Path == "" && pkg.err == nil) || module.CheckImportPath(pkg.path) != nil {
 				continue
+			}
+
+			// We need the checksum for the go.mod file for pkg.mod
+			// so that we know what Go version to use to compile pkg.
+			// However, we didn't do so before Go 1.21, and the bug is relatively
+			// minor, so we maintain the previous (buggy) behavior in 'go mod tidy' to
+			// avoid introducing unnecessary churn.
+			if !ld.Tidy || semver.Compare("v"+ld.GoVersion, tidyGoModSumVersionV) >= 0 {
+				r := resolveReplacement(pkg.mod)
+				keep[modkey(r)] = true
 			}
 
 			if rs.pruning == pruned && pkg.mod.Path != "" {
@@ -1668,6 +1701,7 @@ func keepSums(ctx context.Context, ld *loader, rs *Requirements, which whichSums
 		if which == addBuildListZipSums {
 			for _, m := range mg.BuildList() {
 				r := resolveReplacement(m)
+				keep[modkey(r)] = true // we need the go version from the go.mod file to do anything useful with the zipfile
 				keep[r] = true
 			}
 		}

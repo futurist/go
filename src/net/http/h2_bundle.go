@@ -3777,12 +3777,8 @@ func (p *http2pipe) Write(d []byte) (n int, err error) {
 		p.c.L = &p.mu
 	}
 	defer p.c.Signal()
-	if p.err != nil {
+	if p.err != nil || p.breakErr != nil {
 		return 0, http2errClosedPipeWrite
-	}
-	if p.breakErr != nil {
-		p.unread += len(d)
-		return len(d), nil // discard when there is no reader
 	}
 	return p.b.Write(d)
 }
@@ -5643,15 +5639,18 @@ func (sc *http2serverConn) processData(f *http2DataFrame) error {
 		}
 
 		if len(data) > 0 {
+			st.bodyBytes += int64(len(data))
 			wrote, err := st.body.Write(data)
 			if err != nil {
+				// The handler has closed the request body.
+				// Return the connection-level flow control for the discarded data,
+				// but not the stream-level flow control.
 				sc.sendWindowUpdate(nil, int(f.Length)-wrote)
-				return sc.countError("body_write_err", http2streamError(id, http2ErrCodeStreamClosed))
+				return nil
 			}
 			if wrote != len(data) {
 				panic("internal error: bad Writer")
 			}
-			st.bodyBytes += int64(len(data))
 		}
 
 		// Return any padded flow control now, since we won't
@@ -7582,10 +7581,11 @@ func (t *http2Transport) RoundTripOpt(req *Request, opt http2RoundTripOpt) (*Res
 		http2traceGotConn(req, cc, reused)
 		res, err := cc.RoundTrip(req)
 		if err != nil && retry <= 6 {
+			roundTripErr := err
 			if req, err = http2shouldRetryRequest(req, err); err == nil {
 				// After the first retry, do exponential backoff with 10% jitter.
 				if retry == 0 {
-					t.vlogf("RoundTrip retrying after failure: %v", err)
+					t.vlogf("RoundTrip retrying after failure: %v", roundTripErr)
 					continue
 				}
 				backoff := float64(uint(1) << (uint(retry) - 1))
@@ -7594,7 +7594,7 @@ func (t *http2Transport) RoundTripOpt(req *Request, opt http2RoundTripOpt) (*Res
 				timer := http2backoffNewTimer(d)
 				select {
 				case <-timer.C:
-					t.vlogf("RoundTrip retrying after failure: %v", err)
+					t.vlogf("RoundTrip retrying after failure: %v", roundTripErr)
 					continue
 				case <-req.Context().Done():
 					timer.Stop()
@@ -8287,6 +8287,27 @@ func (cc *http2ClientConn) RoundTrip(req *Request) (*Response, error) {
 		return res, nil
 	}
 
+	cancelRequest := func(cs *http2clientStream, err error) error {
+		cs.cc.mu.Lock()
+		defer cs.cc.mu.Unlock()
+		cs.abortStreamLocked(err)
+		if cs.ID != 0 {
+			// This request may have failed because of a problem with the connection,
+			// or for some unrelated reason. (For example, the user might have canceled
+			// the request without waiting for a response.) Mark the connection as
+			// not reusable, since trying to reuse a dead connection is worse than
+			// unnecessarily creating a new one.
+			//
+			// If cs.ID is 0, then the request was never allocated a stream ID and
+			// whatever went wrong was unrelated to the connection. We might have
+			// timed out waiting for a stream slot when StrictMaxConcurrentStreams
+			// is set, for example, in which case retrying on a different connection
+			// will not help.
+			cs.cc.doNotReuse = true
+		}
+		return err
+	}
+
 	for {
 		select {
 		case <-cs.respHeaderRecv:
@@ -8301,15 +8322,12 @@ func (cc *http2ClientConn) RoundTrip(req *Request) (*Response, error) {
 				return handleResponseHeaders()
 			default:
 				waitDone()
-				return nil, cs.abortErr
+				return nil, cancelRequest(cs, cs.abortErr)
 			}
 		case <-ctx.Done():
-			err := ctx.Err()
-			cs.abortStream(err)
-			return nil, err
+			return nil, cancelRequest(cs, ctx.Err())
 		case <-cs.reqCancel:
-			cs.abortStream(http2errRequestCanceled)
-			return nil, http2errRequestCanceled
+			return nil, cancelRequest(cs, http2errRequestCanceled)
 		}
 	}
 }
@@ -9577,6 +9595,9 @@ func (b http2transportResponseBody) Close() error {
 	cs := b.cs
 	cc := cs.cc
 
+	cs.bufPipe.BreakWithError(http2errClosedResponseBody)
+	cs.abortStream(http2errClosedResponseBody)
+
 	unread := cs.bufPipe.Len()
 	if unread > 0 {
 		cc.mu.Lock()
@@ -9594,9 +9615,6 @@ func (b http2transportResponseBody) Close() error {
 		cc.bw.Flush()
 		cc.wmu.Unlock()
 	}
-
-	cs.bufPipe.BreakWithError(http2errClosedResponseBody)
-	cs.abortStream(http2errClosedResponseBody)
 
 	select {
 	case <-cs.donec:

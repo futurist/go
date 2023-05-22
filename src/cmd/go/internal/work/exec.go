@@ -75,7 +75,11 @@ func (b *Builder) Do(ctx context.Context, root *Action) {
 	if !b.IsCmdList {
 		// If we're doing real work, take time at the end to trim the cache.
 		c := cache.Default()
-		defer c.Trim()
+		defer func() {
+			if err := c.Trim(); err != nil {
+				base.Fatalf("go: failed to trim cache: %v", err)
+			}
+		}()
 	}
 
 	// Build list of all actions, assigning depth-first post-order priority.
@@ -385,8 +389,8 @@ func (b *Builder) buildActionID(a *Action) cache.ActionID {
 	for _, file := range inputFiles {
 		fmt.Fprintf(h, "file %s %s\n", file, b.fileHash(filepath.Join(p.Dir, file)))
 	}
-	if cfg.BuildPGOFile != "" {
-		fmt.Fprintf(h, "pgofile %s\n", b.fileHash(cfg.BuildPGOFile))
+	if p.Internal.PGOProfile != "" {
+		fmt.Fprintf(h, "pgofile %s\n", b.fileHash(p.Internal.PGOProfile))
 	}
 	for _, a1 := range a.Deps {
 		p1 := a1.Package
@@ -526,6 +530,10 @@ func (b *Builder) build(ctx context.Context, a *Action) (err error) {
 			return nil
 		}
 		return errors.New("binary-only packages are no longer supported")
+	}
+
+	if p.Module != nil && !allowedVersion(p.Module.GoVersion) {
+		return errors.New("module requires Go " + p.Module.GoVersion + " or later")
 	}
 
 	if err := b.checkDirectives(a); err != nil {
@@ -849,10 +857,6 @@ OverlayLoop:
 	ofile, out, err := BuildToolchain.gc(b, a, objpkg, icfg.Bytes(), embedcfg, symabis, len(sfiles) > 0, gofiles)
 	if len(out) > 0 {
 		output := b.processOutput(out)
-		if p.Module != nil && !allowedVersion(p.Module.GoVersion) {
-			output += "note: module requires Go " + p.Module.GoVersion + "\n"
-		}
-
 		if err != nil {
 			return formatOutput(b.WorkDir, p.Dir, p.ImportPath, p.Desc(), output)
 		} else {
@@ -860,9 +864,6 @@ OverlayLoop:
 		}
 	}
 	if err != nil {
-		if p.Module != nil && !allowedVersion(p.Module.GoVersion) {
-			b.showOutput(a, p.Dir, p.Desc(), "note: module requires Go "+p.Module.GoVersion+"\n")
-		}
 		return err
 	}
 	if ofile != objpkg {
@@ -1634,7 +1635,7 @@ func (b *Builder) getPkgConfigFlags(p *load.Package) (cflags, ldflags []string, 
 		if len(out) > 0 {
 			// We need to handle path with spaces so that C:/Program\ Files can pass
 			// checkLinkerFlags. Use splitPkgConfigOutput here just like we treat cflags.
-			ldflags, err = splitPkgConfigOutput(out)
+			ldflags, err = splitPkgConfigOutput(bytes.TrimSpace(out))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -2239,12 +2240,38 @@ func (e *prefixSuffixError) ImportPath() string {
 func formatOutput(workDir, dir, importPath, desc, out string) *prefixSuffixError {
 	prefix := "# " + desc
 	suffix := "\n" + out
-	if reldir := base.ShortPath(dir); reldir != dir {
-		suffix = strings.ReplaceAll(suffix, " "+dir, " "+reldir)
-		suffix = strings.ReplaceAll(suffix, "\n"+dir, "\n"+reldir)
-		suffix = strings.ReplaceAll(suffix, "\n\t"+dir, "\n\t"+reldir)
-	}
+
 	suffix = strings.ReplaceAll(suffix, " "+workDir, " $WORK")
+
+	for {
+		// Note that dir starts out long, something like
+		// /foo/bar/baz/root/a
+		// The target string to be reduced is something like
+		// (blah-blah-blah) /foo/bar/baz/root/sibling/whatever.go:blah:blah
+		// /foo/bar/baz/root/a doesn't match /foo/bar/baz/root/sibling, but the prefix
+		// /foo/bar/baz/root does.  And there may be other niblings sharing shorter
+		// prefixes, the only way to find them is to look.
+		// This doesn't always produce a relative path --
+		// /foo is shorter than ../../.., for example.
+		//
+		if reldir := base.ShortPath(dir); reldir != dir {
+			suffix = strings.ReplaceAll(suffix, " "+dir, " "+reldir)
+			suffix = strings.ReplaceAll(suffix, "\n"+dir, "\n"+reldir)
+			suffix = strings.ReplaceAll(suffix, "\n\t"+dir, "\n\t"+reldir)
+			if filepath.Separator == '\\' {
+				// Don't know why, sometimes this comes out with slashes, not backslashes.
+				wdir := strings.ReplaceAll(dir, "\\", "/")
+				suffix = strings.ReplaceAll(suffix, " "+wdir, " "+reldir)
+				suffix = strings.ReplaceAll(suffix, "\n"+wdir, "\n"+reldir)
+				suffix = strings.ReplaceAll(suffix, "\n\t"+wdir, "\n\t"+reldir)
+			}
+		}
+		dirP := filepath.Dir(dir)
+		if dir == dirP {
+			break
+		}
+		dir = dirP
+	}
 
 	return &prefixSuffixError{importPath: importPath, prefix: prefix, suffix: suffix}
 }
@@ -2557,27 +2584,47 @@ func (b *Builder) ccompile(a *Action, p *load.Package, outfile string, flags []s
 	// when -trimpath is enabled.
 	if b.gccSupportsFlag(compiler, "-fdebug-prefix-map=a=b") {
 		if cfg.BuildTrimpath || p.Goroot {
+			prefixMapFlag := "-fdebug-prefix-map"
+			if b.gccSupportsFlag(compiler, "-ffile-prefix-map=a=b") {
+				prefixMapFlag = "-ffile-prefix-map"
+			}
 			// Keep in sync with Action.trimpath.
-			// The trimmed paths are a little different, but we need to trim in the
+			// The trimmed paths are a little different, but we need to trim in mostly the
 			// same situations.
 			var from, toPath string
-			if m := p.Module; m != nil {
-				from = m.Dir
-				toPath = m.Path + "@" + m.Version
+			if m := p.Module; m == nil {
+				if p.Root == "" { // command-line-arguments in GOPATH mode, maybe?
+					from = p.Dir
+					toPath = p.ImportPath
+				} else if p.Goroot {
+					from = p.Root
+					toPath = "GOROOT"
+				} else {
+					from = p.Root
+					toPath = "GOPATH"
+				}
+			} else if m.Dir == "" {
+				// The module is in the vendor directory. Replace the entire vendor
+				// directory path, because the module's Dir is not filled in.
+				from = modload.VendorDir()
+				toPath = "vendor"
 			} else {
-				from = p.Dir
-				toPath = p.ImportPath
+				from = m.Dir
+				toPath = m.Path
+				if m.Version != "" {
+					toPath += "@" + m.Version
+				}
 			}
-			// -fdebug-prefix-map requires an absolute "to" path (or it joins the path
-			// with the working directory). Pick something that makes sense for the
-			// target platform.
+			// -fdebug-prefix-map (or -ffile-prefix-map) requires an absolute "to"
+			// path (or it joins the path  with the working directory). Pick something
+			// that makes sense for the target platform.
 			var to string
 			if cfg.BuildContext.GOOS == "windows" {
 				to = filepath.Join(`\\_\_`, toPath)
 			} else {
 				to = filepath.Join("/_", toPath)
 			}
-			flags = append(slices.Clip(flags), "-fdebug-prefix-map="+from+"="+to)
+			flags = append(slices.Clip(flags), prefixMapFlag+"="+from+"="+to)
 		}
 	}
 
@@ -2760,7 +2807,11 @@ func (b *Builder) compilerCmd(compiler []string, incdir, workdir string) []strin
 			workdir = b.WorkDir
 		}
 		workdir = strings.TrimSuffix(workdir, string(filepath.Separator))
-		a = append(a, "-fdebug-prefix-map="+workdir+"=/tmp/go-build")
+		if b.gccSupportsFlag(compiler, "-ffile-prefix-map=a=b") {
+			a = append(a, "-ffile-prefix-map="+workdir+"=/tmp/go-build")
+		} else {
+			a = append(a, "-fdebug-prefix-map="+workdir+"=/tmp/go-build")
+		}
 	}
 
 	// Tell gcc not to include flags in object files, which defeats the
@@ -3120,6 +3171,36 @@ func (b *Builder) cgo(a *Action, cgoExe, objdir string, pcCFLAGS, pcLDFLAGS, cgo
 		}
 	}
 
+	// Scrutinize CFLAGS and related for flags that might cause
+	// problems if we are using internal linking (for example, use of
+	// plugins, LTO, etc) by calling a helper routine that builds on
+	// the existing CGO flags allow-lists. If we see anything
+	// suspicious, emit a special token file "preferlinkext" (known to
+	// the linker) in the object file to signal the that it should not
+	// try to link internally and should revert to external linking.
+	// The token we pass is a suggestion, not a mandate; if a user is
+	// explicitly asking for a specific linkmode via the "-linkmode"
+	// flag, the token will be ignored. NB: in theory we could ditch
+	// the token approach and just pass a flag to the linker when we
+	// eventually invoke it, and the linker flag could then be
+	// documented (although coming up with a simple explanation of the
+	// flag might be challenging). For more context see issues #58619,
+	// #58620, and #58848.
+	flagSources := []string{"CGO_CFLAGS", "CGO_CXXFLAGS", "CGO_FFLAGS"}
+	flagLists := [][]string{cgoCFLAGS, cgoCXXFLAGS, cgoFFLAGS}
+	if flagsNotCompatibleWithInternalLinking(flagSources, flagLists) {
+		tokenFile := objdir + "preferlinkext"
+		if cfg.BuildN || cfg.BuildX {
+			b.Showcmd("", "echo > %s", tokenFile)
+		}
+		if !cfg.BuildN {
+			if err := os.WriteFile(tokenFile, nil, 0666); err != nil {
+				return nil, nil, err
+			}
+		}
+		outObj = append(outObj, tokenFile)
+	}
+
 	if cfg.BuildMSan {
 		cgoCFLAGS = append([]string{"-fsanitize=memory"}, cgoCFLAGS...)
 		cgoLDFLAGS = append([]string{"-fsanitize=memory"}, cgoLDFLAGS...)
@@ -3367,6 +3448,24 @@ func (b *Builder) cgo(a *Action, cgoExe, objdir string, pcCFLAGS, pcLDFLAGS, cgo
 	}
 
 	return outGo, outObj, nil
+}
+
+// flagsNotCompatibleWithInternalLinking scans the list of cgo
+// compiler flags (C/C++/Fortran) looking for flags that might cause
+// problems if the build in question uses internal linking. The
+// primary culprits are use of plugins or use of LTO, but we err on
+// the side of caution, supporting only those flags that are on the
+// allow-list for safe flags from security perspective. Return is TRUE
+// if a sensitive flag is found, FALSE otherwise.
+func flagsNotCompatibleWithInternalLinking(sourceList []string, flagListList [][]string) bool {
+	for i := range sourceList {
+		sn := sourceList[i]
+		fll := flagListList[i]
+		if err := checkCompilerFlagsForInternalLink(sn, sn, fll); err != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // dynimport creates a Go source file named importGo containing
@@ -3680,8 +3779,13 @@ func (b *Builder) swigOne(a *Action, p *load.Package, file, objdir string, pcCFL
 	// going to compile.
 	goFile = objdir + goFile
 	newGoFile := objdir + "_" + base + "_swig.go"
-	if err := os.Rename(goFile, newGoFile); err != nil {
-		return "", "", err
+	if cfg.BuildX || cfg.BuildN {
+		b.Showcmd("", "mv %s %s", goFile, newGoFile)
+	}
+	if !cfg.BuildN {
+		if err := os.Rename(goFile, newGoFile); err != nil {
+			return "", "", err
+		}
 	}
 	return newGoFile, objdir + gccBase + gccExt, nil
 }

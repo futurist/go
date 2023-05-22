@@ -8,7 +8,7 @@
 /*
 Package metrics provides a stable interface to access implementation-defined
 metrics exported by the Go runtime. This package is similar to existing functions
-like runtime.ReadMemStats and debug.ReadGCStats, but significantly more general.
+like [runtime.ReadMemStats] and [debug.ReadGCStats], but significantly more general.
 
 The set of metrics defined by this package may evolve as the runtime itself
 evolves, and also enables variation across Go implementations, whose relevant
@@ -149,8 +149,9 @@ Below is the full list of supported metrics, ordered lexicographically.
 
 	/gc/heap/allocs-by-size:bytes
 		Distribution of heap allocations by approximate size.
-		Note that this does not include tiny objects as defined by
-		/gc/heap/tiny/allocs:objects, only tiny blocks.
+		Bucket counts increase monotonically. Note that this does not
+		include tiny objects as defined by /gc/heap/tiny/allocs:objects,
+		only tiny blocks.
 
 	/gc/heap/allocs:bytes
 		Cumulative sum of memory allocated to the heap by the
@@ -163,8 +164,9 @@ Below is the full list of supported metrics, ordered lexicographically.
 
 	/gc/heap/frees-by-size:bytes
 		Distribution of freed heap allocations by approximate size.
-		Note that this does not include tiny objects as defined by
-		/gc/heap/tiny/allocs:objects, only tiny blocks.
+		Bucket counts increase monotonically. Note that this does not
+		include tiny objects as defined by /gc/heap/tiny/allocs:objects,
+		only tiny blocks.
 
 	/gc/heap/frees:bytes
 		Cumulative sum of heap memory freed by the garbage collector.
@@ -197,8 +199,8 @@ Below is the full list of supported metrics, ordered lexicographically.
 		1, so a value of 0 indicates that it was never enabled.
 
 	/gc/pauses:seconds
-		Distribution individual GC-related stop-the-world pause
-		latencies.
+		Distribution of individual GC-related stop-the-world pause
+		latencies. Bucket counts increase monotonically.
 
 	/gc/stack/starting-size:bytes
 		The stack size of new goroutines.
@@ -218,6 +220,21 @@ Below is the full list of supported metrics, ordered lexicographically.
 	/godebug/non-default-behavior/installgoroot:events
 		The number of non-default behaviors executed by the go/build
 		package due to a non-default GODEBUG=installgoroot=... setting.
+
+	/godebug/non-default-behavior/jstmpllitinterp:events
+		The number of non-default behaviors executed by
+		the html/template package due to a non-default
+		GODEBUG=jstmpllitinterp=... setting.
+
+	/godebug/non-default-behavior/multipartmaxheaders:events
+		The number of non-default behaviors executed by
+		the mime/multipart package due to a non-default
+		GODEBUG=multipartmaxheaders=... setting.
+
+	/godebug/non-default-behavior/multipartmaxparts:events
+		The number of non-default behaviors executed by
+		the mime/multipart package due to a non-default
+		GODEBUG=multipartmaxparts=... setting.
 
 	/godebug/non-default-behavior/panicnil:events
 		The number of non-default behaviors executed by the runtime
@@ -316,7 +333,8 @@ Below is the full list of supported metrics, ordered lexicographically.
 
 	/sched/latencies:seconds
 		Distribution of the time goroutines have spent in the scheduler
-		in a runnable state before actually running.
+		in a runnable state before actually running. Bucket counts
+		increase monotonically.
 
 	/sync/mutex/wait/total:seconds
 		Approximate cumulative time goroutines have spent blocked
